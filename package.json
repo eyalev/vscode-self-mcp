@@ -1,10 +1,10 @@
 {
-  "name": "vscode-self-mcp",
+  "name": "vscode-helper",
   "version": "1.0.0",
-  "description": "MCP server for controlling VSCode from AI agents",
+  "description": "CLI tool for controlling VSCode from command line and AI agents",
   "main": "dist/server.js",
   "bin": {
-    "vscode-mcp": "dist/cli.js"
+    "vscode-helper": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc",
@@ -14,7 +14,7 @@
     "lint": "eslint src/**/*.ts",
     "start": "node dist/server.js"
   },
-  "keywords": ["mcp", "vscode", "ai", "automation"],
+  "keywords": ["vscode", "cli", "helper", "automation", "mcp"],
   "author": "eyalev",
   "license": "MIT",
   "dependencies": {

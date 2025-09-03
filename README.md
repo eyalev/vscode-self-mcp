@@ -1,71 +1,132 @@
-# VSCode Self-MCP
+# VSCode Helper
 
-A Model Context Protocol (MCP) server for controlling VSCode from AI agents. This project allows AI agents to interact with VSCode through MCP, enabling file operations, terminal commands, and workspace management.
+A command-line helper tool for controlling VSCode from the terminal and AI agents. This project provides both a standalone CLI interface and an MCP server for AI agent integration, enabling workspace management, file operations, and VSCode control.
 
 ## Features
 
-- **MCP Server**: Full MCP server implementation for AI agent integration
-- **CLI Interface**: Standalone CLI for direct VSCode control
+- **Smart Workspace Detection**: Automatically detects active VSCode workspaces using VSCode's own status API
+- **CLI Interface**: Comprehensive command-line tool for VSCode control
+- **JSON Output Support**: Structured output for scripting and automation
 - **File Operations**: Open, create, and manage files in VSCode
+- **Workspace Management**: List, detect, and work with open VSCode workspaces
 - **Terminal Integration**: Execute commands in VSCode terminal
-- **Workspace Search**: Search files and content across workspace
-- **Local Focus**: Optimized for local Ubuntu/Linux environments
+- **Search Capabilities**: Search files and content across workspace
+- **MCP Server**: Full MCP server implementation for AI agent integration
 
 ## Installation
 
+### From Source
 ```bash
 npm install
 npm run build
+npm install -g .
+```
+
+### Global Installation
+```bash
+npm install -g vscode-helper
 ```
 
 ## Usage
 
-### CLI Mode
+### CLI Commands
 
+#### Workspace Management
+```bash
+# Show current active VSCode workspace
+vscode-helper workspace
+
+# List all open VSCode workspaces
+vscode-helper workspaces
+
+# Get workspace info as JSON
+vscode-helper workspace --json
+vscode-helper workspaces --json
+```
+
+#### File Operations
 ```bash
 # Open a file in VSCode
-npm run cli -- open src/server.ts
+vscode-helper open src/server.ts
 
 # Open file at specific line
-npm run cli -- open src/server.ts --line 42
+vscode-helper open src/server.ts --line 42
 
 # Create a new file
-npm run cli -- create newfile.txt --content "Hello World"
-
-# Run a terminal command
-npm run cli -- run "npm install"
-
-# Search for files
-npm run cli -- search package --type files
-
-# Search file content
-npm run cli -- search "VSCode" --type content
-
-# List workspace files
-npm run cli -- files
-
-# Reveal file in VSCode file explorer
-npm run cli -- reveal src/server.ts
+vscode-helper create newfile.txt --content "Hello World"
 
 # Select/highlight file in VSCode file explorer
-npm run cli -- select package.json
+vscode-helper select package.json
+
+# Reveal file in VSCode file explorer
+vscode-helper reveal src/server.ts
+```
+
+#### Workspace Search
+```bash
+# Search for files
+vscode-helper search package --type files
+
+# Search file content
+vscode-helper search "VSCode" --type content
+
+# Get search results as JSON
+vscode-helper search "error" --type content --json
+
+# List workspace files
+vscode-helper files
+vscode-helper files --json
+```
+
+#### Terminal & Navigation
+```bash
+# Run a terminal command
+vscode-helper run "npm install"
 
 # Focus VSCode file explorer
-npm run cli -- focus-explorer
+vscode-helper focus-explorer
 ```
 
-### MCP Server Mode
-
-Start the MCP server:
-
+#### MCP Server
 ```bash
-npm run cli -- server
-# or
-npm start
+# Start MCP server for AI agent integration
+vscode-helper server
 ```
 
-The server communicates via stdio and supports these MCP tools:
+### Key Features
 
+#### Smart Workspace Detection
+The tool intelligently detects your active VSCode workspace by:
+1. Using VSCode's built-in `code --status` API to get currently open workspaces
+2. Prioritizing workspaces that contain your current working directory
+3. Falling back to workspace indicators (.git, package.json, etc.)
+4. Using VSCode's recent workspace storage as final fallback
+
+#### Context-Aware File Operations
+When you run `vscode-helper select package.json` from any terminal location, it will find and select the `package.json` file in your currently active VSCode workspace, not the terminal's current directory.
+
+#### JSON Output Support
+Most commands support `--json` flag for structured output:
+- `--json` flag provides machine-readable output for scripting
+- Regular output provides human-friendly formatting
+- Perfect for integration with other tools and scripts
+
+## MCP Server Integration
+
+To integrate with AI agents like Claude Code, add this server to your MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "vscode-helper": {
+      "command": "vscode-helper",
+      "args": ["server"]
+    }
+  }
+}
+```
+
+### MCP Tools Available:
 - `open_file`: Open files in VSCode
 - `run_terminal_command`: Execute terminal commands
 - `create_file`: Create new files
@@ -74,39 +135,23 @@ The server communicates via stdio and supports these MCP tools:
 - `focus_explorer`: Focus the VSCode file explorer view
 - `select_file_in_explorer`: Select/highlight files in VSCode file explorer
 
-And these MCP resources:
-
+### MCP Resources Available:
 - `vscode://workspace/files`: List workspace files
 - `vscode://editor/content`: Current editor content (requires extension)
-
-## MCP Integration
-
-To integrate with AI agents like Claude Code, add this server to your MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "vscode-self-mcp": {
-      "command": "node",
-      "args": ["/path/to/vscode-self-mcp/dist/server.js"]
-    }
-  }
-}
-```
 
 ## Architecture
 
 The project consists of:
 
-- **MCP Server** (`src/server.ts`): Handles MCP protocol communication
-- **VSCode Controller** (`src/vscode-controller.ts`): Core VSCode integration logic
-- **CLI Interface** (`src/cli.ts`): Command-line wrapper for direct usage
+- **VSCode Controller** (`src/vscode-controller.ts`): Core VSCode integration and workspace detection logic
+- **CLI Interface** (`src/cli.ts`): Command-line wrapper with argument parsing
+- **MCP Server** (`src/server.ts`): Handles MCP protocol communication for AI agents
 
 ## Requirements
 
 - Node.js 18+
 - VSCode installed and accessible via `code` command
-- Ubuntu/Linux (primary target platform)
+- Linux/Ubuntu (primary target platform)
 - TypeScript for development
 
 ## Development
@@ -118,20 +163,56 @@ npm install
 # Build
 npm run build
 
+# Install locally for testing
+npm install -g .
+
 # Run in development
 npm run dev
 
-# Test basic functionality
-node dist/simple-test.js
+# Test CLI directly
+npm run cli -- workspaces
+```
+
+## Examples
+
+### Working with Multiple VSCode Windows
+```bash
+# List all open VSCode workspaces
+$ vscode-helper workspaces
+Open VSCode workspaces (3):
+  project-a - /home/user/projects/project-a
+  project-b - /home/user/projects/project-b
+  project-c - /home/user/projects/project-c
+
+# Get the active workspace (based on current context)
+$ vscode-helper workspace
+Active VSCode workspace: /home/user/projects/project-a
+
+# Select a file in the active workspace from anywhere
+$ cd /tmp
+$ vscode-helper select src/main.py
+Successfully selected src/main.py in VSCode file explorer (workspace: /home/user/projects/project-a)
+```
+
+### JSON Integration
+```bash
+# Get workspace data for scripting
+$ vscode-helper workspaces --json | jq '.[].name'
+"project-a"
+"project-b" 
+"project-c"
+
+# Search and process results
+$ vscode-helper search "TODO" --type content --json | jq '.results'
 ```
 
 ## Limitations
 
-- Currently focused on Ubuntu/Linux
-- Some features (like current editor content) require VSCode extension
-- No authentication (local-only by design)
-- Terminal integration varies by desktop environment
+- Primarily designed for Linux/Ubuntu environments
+- Some features require VSCode to be running
+- Terminal integration may vary by desktop environment
+- MCP server mode is designed for local usage only
 
 ## Contributing
 
-This is a personal project focused on local VSCode automation for AI agents. Feel free to fork and adapt for your needs.
+This project focuses on local VSCode automation and AI agent integration. Feel free to fork and adapt for your specific needs.

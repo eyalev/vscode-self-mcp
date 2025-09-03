@@ -10,8 +10,8 @@ const isDebug = process.env.VSCODE_MCP_DEBUG === 'true' || process.argv.includes
 const vscode = new VSCodeController(isDebug);
 
 program
-  .name('vscode-mcp')
-  .description('CLI for VSCode MCP operations')
+  .name('vscode-helper')
+  .description('CLI helper for controlling VSCode from command line')
   .version('1.0.0')
   .option('--debug', 'Enable debug output');
 
@@ -188,7 +188,7 @@ program
 
 program
   .command('server')
-  .description('Start MCP server')
+  .description('Start MCP server for AI agent integration')
   .action(async () => {
     try {
       const { VSCodeMCPServer } = await import('./server.js');
