@@ -65,13 +65,24 @@ program
   .description('Search workspace')
   .argument('<query>', 'Search query')
   .option('-t, --type <type>', 'Search type: files or content', 'files')
+  .option('--json', 'Output as JSON')
   .action(async (query, options) => {
     try {
       if (!['files', 'content'].includes(options.type)) {
         throw new Error('Type must be "files" or "content"');
       }
       const result = await vscode.searchWorkspace(query, options.type as 'files' | 'content');
-      console.log(result.content[0].text);
+      
+      if (options.json) {
+        const output = {
+          query,
+          type: options.type,
+          results: result.content[0].text
+        };
+        console.log(JSON.stringify(output, null, 2));
+      } else {
+        console.log(result.content[0].text);
+      }
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : 'Unknown error');
       process.exit(1);
@@ -81,10 +92,16 @@ program
 program
   .command('files')
   .description('List workspace files')
-  .action(async () => {
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
     try {
       const result = await vscode.getWorkspaceFiles();
-      console.log(result.contents[0].text);
+      if (options.json) {
+        console.log(result.contents[0].text); // Already JSON formatted
+      } else {
+        const files = JSON.parse(result.contents[0].text);
+        console.log(`Workspace files (${files.length}):\n${files.map((f: any) => `  ${f.path}`).join('\n')}`);
+      }
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : 'Unknown error');
       process.exit(1);
@@ -126,6 +143,43 @@ program
     try {
       const result = await vscode.focusExplorer();
       console.log(result.content[0].text);
+    } catch (error) {
+      console.error('Error:', error instanceof Error ? error.message : 'Unknown error');
+      process.exit(1);
+    }
+  });
+
+program
+  .command('workspace')
+  .description('Show the current active VSCode workspace')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    try {
+      const result = await vscode.getActiveWorkspace();
+      if (options.json) {
+        const activeWorkspace = await vscode.getActiveVSCodeWorkspacePath();
+        console.log(JSON.stringify({ activeWorkspace }, null, 2));
+      } else {
+        console.log(result.content[0].text);
+      }
+    } catch (error) {
+      console.error('Error:', error instanceof Error ? error.message : 'Unknown error');
+      process.exit(1);
+    }
+  });
+
+program
+  .command('workspaces')
+  .description('List all open VSCode workspaces')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    try {
+      const result = await vscode.getAllWorkspaces();
+      if (options.json) {
+        console.log(JSON.stringify(result.workspaces, null, 2));
+      } else {
+        console.log(result.content[0].text);
+      }
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : 'Unknown error');
       process.exit(1);
