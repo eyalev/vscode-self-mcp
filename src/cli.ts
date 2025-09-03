@@ -151,34 +151,70 @@ program
 
 program
   .command('workspace')
-  .description('Show the current active VSCode workspace')
+  .description('Workspace management commands')
+  .argument('[action]', 'Action to perform (open-terminal, focus, open-file)')
+  .option('--active', 'Show the current active workspace')
+  .option('--list', 'List all open workspaces')
+  .option('--get <name>', 'Target specific workspace by name')
   .option('--json', 'Output as JSON')
-  .action(async (options) => {
+  .action(async (action, options) => {
     try {
-      const result = await vscode.getActiveWorkspace();
-      if (options.json) {
-        const activeWorkspace = await vscode.getActiveVSCodeWorkspacePath();
-        console.log(JSON.stringify({ activeWorkspace }, null, 2));
-      } else {
-        console.log(result.content[0].text);
+      // Handle workspace information queries first
+      if (options.active) {
+        const result = await vscode.getActiveWorkspace();
+        if (options.json) {
+          const activeWorkspace = await vscode.getActiveVSCodeWorkspacePath();
+          console.log(JSON.stringify({ activeWorkspace }, null, 2));
+        } else {
+          console.log(result.content[0].text);
+        }
+        return;
       }
-    } catch (error) {
-      console.error('Error:', error instanceof Error ? error.message : 'Unknown error');
-      process.exit(1);
-    }
-  });
+      
+      if (options.list) {
+        const result = await vscode.getAllWorkspaces();
+        if (options.json) {
+          console.log(JSON.stringify(result.workspaces, null, 2));
+        } else {
+          console.log(result.content[0].text);
+        }
+        return;
+      }
 
-program
-  .command('workspaces')
-  .description('List all open VSCode workspaces')
-  .option('--json', 'Output as JSON')
-  .action(async (options) => {
-    try {
-      const result = await vscode.getAllWorkspaces();
-      if (options.json) {
-        console.log(JSON.stringify(result.workspaces, null, 2));
-      } else {
-        console.log(result.content[0].text);
+      // Handle --get without action (show workspace info)
+      if (options.get && !action) {
+        const result = await vscode.getWorkspaceInfo(options.get);
+        if (options.json) {
+          console.log(JSON.stringify(result.workspace, null, 2));
+        } else {
+          console.log(result.content[0].text);
+        }
+        return;
+      }
+
+      // Handle workspace actions that require an action argument
+      if (!action) {
+        throw new Error('Please specify an action (open-terminal, focus, open-file) or use --active/--list flags');
+      }
+
+      switch (action) {
+        case 'open-terminal':
+          const terminalResult = await vscode.openTerminalInWorkspace(options.get);
+          console.log(terminalResult.content[0].text);
+          break;
+
+        case 'focus':
+          const focusResult = await vscode.focusWorkspace(options.get);
+          console.log(focusResult.content[0].text);
+          break;
+        
+        case 'open-file':
+          // TODO: Implement workspace file opening
+          console.log('Open-file functionality not yet implemented');
+          break;
+        
+        default:
+          throw new Error(`Unknown action: ${action}. Available actions: open-terminal, focus, open-file`);
       }
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : 'Unknown error');

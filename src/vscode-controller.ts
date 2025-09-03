@@ -9,6 +9,8 @@ const execAsync = promisify(exec);
 export class VSCodeController {
   private workspaceRoot: string;
   private debug: boolean;
+  private workspaceCache: { data: Array<{ name: string; path: string }>; timestamp: number } | null = null;
+  private readonly CACHE_DURATION = 5000; // 5 seconds cache
 
   constructor(debug: boolean = false) {
     this.workspaceRoot = process.cwd();
@@ -37,6 +39,96 @@ export class VSCodeController {
       }
     }
     return null;
+  }
+
+  private async getOpenWorkspacesFast(): Promise<Array<{ name: string; path: string }>> {
+    // Check cache first
+    if (this.workspaceCache && (Date.now() - this.workspaceCache.timestamp < this.CACHE_DURATION)) {
+      this.log(`Using cached workspace data`);
+      return this.workspaceCache.data;
+    }
+
+    this.log(`Refreshing workspace data...`);
+    const workspaces: Array<{ name: string; path: string }> = [];
+
+    try {
+      // Method 1: Fast - Get open VSCode windows using wmctrl
+      const { stdout: wmctrlOutput } = await execAsync('wmctrl -l -x');
+      const vscodeWindows = wmctrlOutput.split('\n').filter(line => 
+        line.includes('code.Code') && line.includes('Visual Studio Code')
+      );
+
+      // Extract workspace names from window titles
+      const windowWorkspaceNames: string[] = [];
+      for (const window of vscodeWindows) {
+        const parts = window.split(/\s+/);
+        if (parts.length > 4) {
+          const windowTitle = parts.slice(4).join(' ');
+          const workspaceName = this.extractWorkspaceFromTitle(windowTitle);
+          if (workspaceName && !windowWorkspaceNames.includes(workspaceName)) {
+            windowWorkspaceNames.push(workspaceName);
+          }
+        }
+      }
+
+      this.log(`Found ${windowWorkspaceNames.length} workspace windows: ${windowWorkspaceNames.join(', ')}`);
+
+      // Method 2: Fast - Read VSCode workspace storage to get paths
+      const { stdout: storageFiles } = await execAsync('ls ~/.config/Code/User/workspaceStorage/*/workspace.json 2>/dev/null || echo ""');
+      
+      if (storageFiles.trim()) {
+        const workspaceFiles = storageFiles.trim().split('\n');
+        
+        for (const workspaceFile of workspaceFiles) {
+          try {
+            const workspaceData = JSON.parse(await readFile(workspaceFile, 'utf8'));
+            if (workspaceData.folder && workspaceData.folder.startsWith('file://')) {
+              const workspacePath = workspaceData.folder.replace('file://', '');
+              const workspaceName = workspacePath.split('/').pop() || '';
+              
+              // Only include workspaces that have open windows OR are recently used
+              if (windowWorkspaceNames.some(winName => 
+                winName.toLowerCase().includes(workspaceName.toLowerCase()) ||
+                workspaceName.toLowerCase().includes(winName.toLowerCase())
+              )) {
+                try {
+                  await access(workspacePath);
+                  workspaces.push({
+                    name: workspaceName,
+                    path: workspacePath
+                  });
+                  this.log(`Added open workspace: ${workspaceName} -> ${workspacePath}`);
+                } catch {
+                  // Workspace path doesn't exist anymore
+                }
+              }
+            }
+          } catch {
+            // Invalid JSON or file read error
+          }
+        }
+      }
+
+      // Cache the results
+      this.workspaceCache = {
+        data: workspaces,
+        timestamp: Date.now()
+      };
+
+      this.log(`Fast method found ${workspaces.length} workspaces`);
+      return workspaces;
+
+    } catch (error) {
+      this.log(`Fast method failed: ${error}, falling back to slow method`);
+      // Fallback to the original slow method
+      return this.parseVSCodeStatusSlow();
+    }
+  }
+
+  private async parseVSCodeStatusSlow(): Promise<Array<{ name: string; path: string }>> {
+    this.log('Using slow code --status method...');
+    const { stdout } = await execAsync('code --status');
+    return this.parseVSCodeStatus(stdout);
   }
 
   private async parseVSCodeStatus(statusOutput: string): Promise<Array<{ name: string; path: string }>> {
@@ -146,10 +238,9 @@ export class VSCodeController {
 
   private async getActiveVSCodeWorkspace(): Promise<string> {
     try {
-      // Approach 1: Use VSCode CLI status to get open workspaces (most reliable)
+      // Approach 1: Use fast workspace detection (most reliable and fast)
       try {
-        const { stdout } = await execAsync('code --status');
-        const workspaces = await this.parseVSCodeStatus(stdout);
+        const workspaces = await this.getOpenWorkspacesFast();
         
         if (workspaces.length > 0) {
           this.log(`Found ${workspaces.length} open VSCode workspaces: ${workspaces.map(w => w.name).join(', ')}`);
@@ -514,9 +605,8 @@ export class VSCodeController {
     workspaces: Array<{ name: string; path: string }>;
   }> {
     try {
-      // Use VSCode CLI status to get all open workspaces
-      const { stdout } = await execAsync('code --status');
-      const workspaces = await this.parseVSCodeStatus(stdout);
+      // Use fast workspace detection
+      const workspaces = await this.getOpenWorkspacesFast();
       
       const workspaceText = workspaces.length > 0 
         ? `Open VSCode workspaces (${workspaces.length}):\n${workspaces.map(w => `  ${w.name} - ${w.path}`).join('\n')}`
@@ -537,6 +627,175 @@ export class VSCodeController {
   // Expose the internal method for CLI JSON output
   getActiveVSCodeWorkspacePath(): Promise<string> {
     return this.getActiveVSCodeWorkspace();
+  }
+
+  async getWorkspaceInfo(workspaceName: string): Promise<{ 
+    content: Array<{ type: 'text'; text: string }>;
+    workspace: { name: string; path: string; status: string };
+  }> {
+    try {
+      // Find the workspace by name using fast method
+      const workspaces = await this.getOpenWorkspacesFast();
+      
+      const targetWorkspace = workspaces.find(w => 
+        w.name.toLowerCase().includes(workspaceName.toLowerCase()) ||
+        workspaceName.toLowerCase().includes(w.name.toLowerCase())
+      );
+      
+      if (!targetWorkspace) {
+        throw new Error(`Workspace '${workspaceName}' not found. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`);
+      }
+
+      this.log(`Found workspace info for: ${targetWorkspace.name}`);
+
+      // Check if this is the currently active workspace
+      const activeWorkspace = await this.getActiveVSCodeWorkspace();
+      const isActive = activeWorkspace === targetWorkspace.path;
+
+      // Get basic file count info (optional enhancement)
+      let fileCount = 'unknown';
+      try {
+        const { stdout: fileCountOutput } = await execAsync(`find "${targetWorkspace.path}" -type f 2>/dev/null | wc -l`);
+        fileCount = fileCountOutput.trim();
+      } catch {
+        // Ignore file count errors
+      }
+
+      const status = isActive ? 'active' : 'open';
+      const workspaceInfo = {
+        name: targetWorkspace.name,
+        path: targetWorkspace.path,
+        status: status
+      };
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Workspace: ${targetWorkspace.name}\nPath: ${targetWorkspace.path}\nStatus: ${status}${fileCount !== 'unknown' ? `\nFiles: ~${fileCount}` : ''}`
+        }],
+        workspace: workspaceInfo
+      };
+    } catch (error) {
+      this.log(`Error getting workspace info: ${error}`);
+      throw new Error(`Failed to get workspace info: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async openTerminalInWorkspace(workspaceName?: string): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+    try {
+      let targetWorkspacePath: string;
+      
+      if (workspaceName) {
+        // Find the workspace by name using fast method
+        const workspaces = await this.getOpenWorkspacesFast();
+        
+        const targetWorkspace = workspaces.find(w => 
+          w.name.toLowerCase().includes(workspaceName.toLowerCase()) ||
+          workspaceName.toLowerCase().includes(w.name.toLowerCase())
+        );
+        
+        if (!targetWorkspace) {
+          throw new Error(`Workspace '${workspaceName}' not found. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`);
+        }
+        
+        targetWorkspacePath = targetWorkspace.path;
+        this.log(`Found target workspace: ${targetWorkspace.name} at ${targetWorkspacePath}`);
+      } else {
+        // Use active workspace
+        targetWorkspacePath = await this.getActiveVSCodeWorkspace();
+        this.log(`Using active workspace: ${targetWorkspacePath}`);
+      }
+
+      // Open VSCode with the workspace and create a new terminal
+      const command = `code "${targetWorkspacePath}" --command "workbench.action.terminal.new"`;
+      this.log(`Executing command: ${command}`);
+      await execAsync(command);
+
+      const workspaceName_display = workspaceName || 'active workspace';
+      return {
+        content: [{
+          type: 'text',
+          text: `Successfully opened terminal in ${workspaceName_display} (${targetWorkspacePath})`
+        }]
+      };
+    } catch (error) {
+      this.log(`Error opening terminal: ${error}`);
+      throw new Error(`Failed to open terminal: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async focusWorkspace(workspaceName?: string): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+    try {
+      let targetWorkspace: { name: string; path: string };
+      
+      if (workspaceName) {
+        // Find the workspace by name using fast method
+        const workspaces = await this.getOpenWorkspacesFast();
+        
+        const foundWorkspace = workspaces.find(w => 
+          w.name.toLowerCase().includes(workspaceName.toLowerCase()) ||
+          workspaceName.toLowerCase().includes(w.name.toLowerCase())
+        );
+        
+        if (!foundWorkspace) {
+          throw new Error(`Workspace '${workspaceName}' not found. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`);
+        }
+        
+        targetWorkspace = foundWorkspace;
+        this.log(`Found target workspace: ${targetWorkspace.name} at ${targetWorkspace.path}`);
+      } else {
+        // Use active workspace - find it in the workspace list
+        const activeWorkspacePath = await this.getActiveVSCodeWorkspace();
+        const workspaces = await this.getOpenWorkspacesFast();
+        
+        const foundWorkspace = workspaces.find(w => w.path === activeWorkspacePath);
+        if (!foundWorkspace) {
+          throw new Error('Could not find active workspace in open workspaces list');
+        }
+        
+        targetWorkspace = foundWorkspace;
+        this.log(`Using active workspace: ${targetWorkspace.name}`);
+      }
+
+      // Method 1: Try to focus using wmctrl (Linux window manager control)
+      try {
+        // Get VSCode windows and find the one with matching workspace name
+        const { stdout: wmctrlOutput } = await execAsync('wmctrl -l');
+        const vscodeWindows = wmctrlOutput.split('\n').filter(line => 
+          line.includes('Visual Studio Code') && line.includes(targetWorkspace.name)
+        );
+        
+        if (vscodeWindows.length > 0) {
+          // Extract window ID (first column)
+          const windowId = vscodeWindows[0].split(/\s+/)[0];
+          await execAsync(`wmctrl -i -a ${windowId}`);
+          
+          return {
+            content: [{
+              type: 'text',
+              text: `Successfully focused workspace '${targetWorkspace.name}' window`
+            }]
+          };
+        }
+      } catch (wmctrlError) {
+        this.log(`wmctrl method failed: ${wmctrlError}, trying alternative method`);
+      }
+
+      // Method 2: Fallback to opening the workspace (will bring it to focus)
+      const command = `code "${targetWorkspace.path}"`;
+      this.log(`Executing fallback command: ${command}`);
+      await execAsync(command);
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Focused workspace '${targetWorkspace.name}' (${targetWorkspace.path})`
+        }]
+      };
+    } catch (error) {
+      this.log(`Error focusing workspace: ${error}`);
+      throw new Error(`Failed to focus workspace: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
   async selectFileInExplorer(filePath: string): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
