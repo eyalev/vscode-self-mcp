@@ -706,10 +706,22 @@ export class VSCodeController {
         this.log(`Using active workspace: ${targetWorkspacePath}`);
       }
 
-      // Open VSCode with the workspace and create a new terminal
-      const command = `code "${targetWorkspacePath}" --command "workbench.action.terminal.new"`;
-      this.log(`Executing command: ${command}`);
-      await execAsync(command);
+      // First focus/open the workspace
+      const openCommand = `code "${targetWorkspacePath}"`;
+      this.log(`Opening workspace: ${openCommand}`);
+      await execAsync(openCommand);
+
+      // Wait a moment for VSCode to focus
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Use keyboard shortcut to open new terminal (Ctrl+Shift+`)
+      try {
+        await execAsync('xdotool key ctrl+shift+grave');
+        this.log('Sent keyboard shortcut to open terminal');
+      } catch (xdotoolError) {
+        this.log(`xdotool failed: ${xdotoolError}, workspace opened but terminal may not have been created`);
+        // Don't throw error - workspace was still opened successfully
+      }
 
       const workspaceName_display = workspaceName || 'active workspace';
       return {
